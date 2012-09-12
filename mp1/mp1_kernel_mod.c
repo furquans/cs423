@@ -6,6 +6,8 @@
 #include <linux/proc_fs.h>
 #include <linux/list.h>
 #include <asm/uaccess.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
 
 /* Proc dir and proc entry to be added */
 static struct proc_dir_entry *proc_dir, *proc_entry;
@@ -19,6 +21,12 @@ typedef struct mp1_proc_entry{
 
 /* List head */
 MP1_PROC_ENTRY mp1_proc_list;
+
+/* Kernel Thread */
+struct task_struct *mp1_kernel_thread;
+
+/* Wait queue for kernel thread to wait on */
+static DECLARE_WAIT_QUEUE_HEAD (mp1_waitqueue);
 
 /* Func: mp1_read_proc
  * Desc: Read the list and provide pid and cpu time of each registered
@@ -79,6 +87,39 @@ int mp1_write_proc(struct file *filp, const char __user *buff,
 	return len;
 }
 
+int mp1_kernel_thread_fn(void *unused)
+{
+	/* Declare a waitqueue */
+	DECLARE_WAITQUEUE(wait,current);
+
+	/* Add wait queue to the head */
+	add_wait_queue(&mp1_waitqueue,&wait);
+
+	while(1) {
+		printk(KERN_INFO "here in thread\n");
+		/* Set current state to interruptible */
+		set_current_state(TASK_INTERRUPTIBLE);
+
+		/* give up the control */
+		schedule();
+
+		/* coming back to running state, check if it needs to stop */
+		if (kthread_should_stop()) {
+			printk(KERN_INFO "needs to stop\n");
+			break;
+		}
+		printk(KERN_INFO "continuing in while loop\n");
+	}
+
+	/* exiting thread, set it to running state */
+	set_current_state(TASK_RUNNING);
+	/* remove the waitqueue */
+	remove_wait_queue(&mp1_waitqueue, &wait);
+
+	printk(KERN_INFO "thread killed\n");
+	return 0;
+}
+
 /* Func: mp1_init_module
  * Desc: Module initialization code
  *
@@ -112,6 +153,15 @@ static int __init mp1_init_module(void)
 
 			/* Initialize a linked list for mp1 proc details */
 			INIT_LIST_HEAD(&mp1_proc_list.list);
+
+			/* Create a kernel thread */
+			mp1_kernel_thread = kthread_run(mp1_kernel_thread_fn,
+							NULL,
+							"mp1kt");
+
+			if (mp1_kernel_thread == NULL) {
+				printk(KERN_INFO "thread not created\n");
+			}
 		}
 	}
 
@@ -140,6 +190,12 @@ static void __exit mp1_exit_module(void)
 		list_del(&tmp->list);
 		kfree(tmp);
 	}
+
+	/* Before stopping the thread, put it into running state */
+	wake_up_interruptible(&mp1_waitqueue);
+
+	/* now stop the thread */
+	kthread_stop(mp1_kernel_thread);
 }
 
 module_init(mp1_init_module);
