@@ -142,7 +142,7 @@ int mp1_write_proc(struct file *filp, const char __user *buff,
  */
 int mp1_kernel_thread_fn(void *unused)
 {
-	MP1_PROC_ENTRY *tmp;
+	MP1_PROC_ENTRY *tmp, *swap;
 	int ret;
 
 	/* Declare a waitqueue */
@@ -180,9 +180,13 @@ int mp1_kernel_thread_fn(void *unused)
 
 		/* Traverse the list and update the cpu time for each registered
 		   process */
-		list_for_each_entry(tmp, &mp1_proc_list.list, list) {
-			/* TBD: check for return value and update link list accordingly */
-			get_cpu_use(tmp->pid, &tmp->cpu_time);
+		list_for_each_entry_safe(tmp, swap, &mp1_proc_list.list, list) {
+			/* check for return value and update link list accordingly */
+			if (get_cpu_use(tmp->pid, &tmp->cpu_time) == -1) {
+				printk(KERN_INFO "mp1:deleting %u\n",tmp->pid);
+				list_del(&tmp->list);
+				kfree(tmp);
+			}
 		}
 
 		/* Exit critical region */
@@ -194,7 +198,7 @@ int mp1_kernel_thread_fn(void *unused)
 	/* remove the waitqueue */
 	remove_wait_queue(&mp1_waitqueue, &wait);
 
-	printk(KERN_INFO "thread killed\n");
+	printk(KERN_INFO "mp1:thread killed\n");
 	return 0;
 }
 
