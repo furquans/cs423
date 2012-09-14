@@ -36,6 +36,10 @@ static struct timer_list mp1_timer;
 /* Semaphore for synchronization on the list */
 static struct semaphore mp1_sem;
 
+/* Func: mp1_timer_callback
+ * Desc: Timer callback to just wake up the kernel thread
+ *
+ */
 void mp1_timer_callback(unsigned long data)
 {
 	/* Put the kernel thread into running state */
@@ -55,7 +59,7 @@ int mp1_read_proc(char *page, char **start, off_t off,
 
 	/* Enter critical region */
 	if (down_interruptible(&mp1_sem)) {
-		printk(KERN_INFO "unable to obtain sem\n");
+		printk(KERN_INFO "mp1:unable to obtain sem\n");
 		return 0;
 	}
 
@@ -131,6 +135,11 @@ int mp1_write_proc(struct file *filp, const char __user *buff,
 	return len;
 }
 
+/* Func: mp1_kernel_thread_fn
+ * Desc: Kernel thread to update the linked list of
+ *       registered processes
+ *
+ */
 int mp1_kernel_thread_fn(void *unused)
 {
 	MP1_PROC_ENTRY *tmp;
@@ -143,7 +152,6 @@ int mp1_kernel_thread_fn(void *unused)
 	add_wait_queue(&mp1_waitqueue,&wait);
 
 	while(1) {
-		printk(KERN_INFO "here in thread\n");
 		/* Set current state to interruptible */
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -157,17 +165,17 @@ int mp1_kernel_thread_fn(void *unused)
 
 		/* coming back to running state, check if it needs to stop */
 		if (kthread_should_stop()) {
-			printk(KERN_INFO "needs to stop\n");
+			printk(KERN_INFO "mp1:thread needs to stop\n");
 			break;
 		}
-		printk(KERN_INFO "continuing in while loop\n");
+		printk(KERN_INFO "mp1:updating cpu time of processes\n");
 
 		/* Start the timer here */
 		ret = mod_timer(&mp1_timer, jiffies + msecs_to_jiffies(5000));
 
                 /* Not able to start the timer? */
                 if (ret) {
-                        printk(KERN_INFO "Error in mod_timer\n");
+                        printk(KERN_INFO "mp1:Error in mod_timer\n");
                 }
 
 		/* Traverse the list and update the cpu time for each registered
@@ -219,7 +227,7 @@ static int __init mp1_init_module(void)
 			proc_entry->read_proc = mp1_read_proc;
 			proc_entry->write_proc = mp1_write_proc;
 
-			printk(KERN_INFO "MP1 module loaded\n");
+			printk(KERN_INFO "mp1:MP1 module loaded\n");
 
 			/* Initialize a linked list for mp1 proc details */
 			INIT_LIST_HEAD(&mp1_proc_list.list);
@@ -234,7 +242,7 @@ static int __init mp1_init_module(void)
 
 			if (mp1_kernel_thread == NULL) {
 				/* TBD: Cleanup? */
-				printk(KERN_INFO "thread not created\n");
+				printk(KERN_INFO "mp1:thread not created\n");
 			}
 
 			/* Setup the timer */
@@ -262,11 +270,11 @@ static void __exit mp1_exit_module(void)
 	/* Remove the mp1 proc dir now */
 	remove_proc_entry("mp1", NULL);
 
-	printk(KERN_INFO "MP1 module unloaded\n");
+	printk(KERN_INFO "mp1:MP1 module unloaded\n");
 
 	/* Delete each list entry and free the allocated structure */
 	list_for_each_entry_safe(tmp, swap, &mp1_proc_list.list, list) {
-		printk(KERN_INFO "freeing %u\n",tmp->pid);
+		printk(KERN_INFO "mp1:freeing %u\n",tmp->pid);
 		list_del(&tmp->list);
 		kfree(tmp);
 	}
