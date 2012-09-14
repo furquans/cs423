@@ -9,6 +9,8 @@
 #include <linux/kthread.h>
 #include <linux/sched.h>
 
+#include "mp1_given.h"
+
 /* Proc dir and proc entry to be added */
 static struct proc_dir_entry *proc_dir, *proc_entry;
 
@@ -16,17 +18,29 @@ static struct proc_dir_entry *proc_dir, *proc_entry;
 typedef struct mp1_proc_entry{
 	struct list_head list;
 	unsigned int pid;
-	unsigned int cpu_time;
+	unsigned long cpu_time;
 }MP1_PROC_ENTRY;
 
 /* List head */
-MP1_PROC_ENTRY mp1_proc_list;
+static MP1_PROC_ENTRY mp1_proc_list;
 
 /* Kernel Thread */
-struct task_struct *mp1_kernel_thread;
+static struct task_struct *mp1_kernel_thread;
 
 /* Wait queue for kernel thread to wait on */
 static DECLARE_WAIT_QUEUE_HEAD (mp1_waitqueue);
+
+/* Timer for waking kernel thread periodically */
+static struct timer_list mp1_timer;
+
+/* Semaphore for synchronization on the list */
+static struct semaphore mp1_sem;
+
+void mp1_timer_callback(unsigned long data)
+{
+	/* Put the kernel thread into running state */
+	wake_up_interruptible(&mp1_waitqueue);
+}
 
 /* Func: mp1_read_proc
  * Desc: Read the list and provide pid and cpu time of each registered
@@ -39,10 +53,19 @@ int mp1_read_proc(char *page, char **start, off_t off,
 	int len = 0;
 	MP1_PROC_ENTRY *tmp;
 
+	/* Enter critical region */
+	if (down_interruptible(&mp1_sem)) {
+		printk(KERN_INFO "unable to obtain sem\n");
+		return 0;
+	}
+
 	/* Traverse the list and put values into page */
 	list_for_each_entry(tmp, &mp1_proc_list.list, list) {
-		len += sprintf(page+len, "%u:%u\n",tmp->pid, tmp->cpu_time);
+		len += sprintf(page+len, "%u:%lu\n",tmp->pid, tmp->cpu_time);
 	}
+
+	/* Exit critical region */
+	up(&mp1_sem);
 
 	/* Return length of data being sent */
 	return len;
@@ -59,6 +82,7 @@ int mp1_write_proc(struct file *filp, const char __user *buff,
 #define PID_LEN 8
 	char pid_str[PID_LEN];
 	MP1_PROC_ENTRY *tmp;
+	int ret;
 
 	if (len > PID_LEN) {
 		len = PID_LEN;
@@ -81,14 +105,37 @@ int mp1_write_proc(struct file *filp, const char __user *buff,
 	/* Initialize list structure in the entry */
 	INIT_LIST_HEAD(&tmp->list);
 
+	/* Enter critical region */
+	if (down_interruptible(&mp1_sem)) {
+		printk(KERN_INFO "mp1:Unable to enter critical region\n");
+		return 0;
+	}
+
+	/* For the first entry, start the timer */
+	if (list_empty(&mp1_proc_list.list)) {
+		printk(KERN_INFO "mp1:list is empty..starting timer\n");
+		/* Starting timer for 5 secs from now */
+		ret = mod_timer(&mp1_timer, jiffies + msecs_to_jiffies(5000));
+		/* Not able to start the timer? */
+		if (ret) {
+			printk(KERN_INFO "mp1:Error in mod_timer\n");
+		}
+	}
+
 	/* Add the entry to the head */
 	list_add_tail(&(tmp->list), &(mp1_proc_list.list));
+
+	/* Exit critical region */
+	up(&mp1_sem);
 
 	return len;
 }
 
 int mp1_kernel_thread_fn(void *unused)
 {
+	MP1_PROC_ENTRY *tmp;
+	int ret;
+
 	/* Declare a waitqueue */
 	DECLARE_WAITQUEUE(wait,current);
 
@@ -103,12 +150,35 @@ int mp1_kernel_thread_fn(void *unused)
 		/* give up the control */
 		schedule();
 
+		/* Enter critical region */
+		if (down_interruptible(&mp1_sem)) {
+			printk(KERN_INFO "mp1: Cannot enter critical region\n");
+		}
+
 		/* coming back to running state, check if it needs to stop */
 		if (kthread_should_stop()) {
 			printk(KERN_INFO "needs to stop\n");
 			break;
 		}
 		printk(KERN_INFO "continuing in while loop\n");
+
+		/* Start the timer here */
+		ret = mod_timer(&mp1_timer, jiffies + msecs_to_jiffies(5000));
+
+                /* Not able to start the timer? */
+                if (ret) {
+                        printk(KERN_INFO "Error in mod_timer\n");
+                }
+
+		/* Traverse the list and update the cpu time for each registered
+		   process */
+		list_for_each_entry(tmp, &mp1_proc_list.list, list) {
+			/* TBD: check for return value and update link list accordingly */
+			get_cpu_use(tmp->pid, &tmp->cpu_time);
+		}
+
+		/* Exit critical region */
+		up(&mp1_sem);
 	}
 
 	/* exiting thread, set it to running state */
@@ -154,14 +224,21 @@ static int __init mp1_init_module(void)
 			/* Initialize a linked list for mp1 proc details */
 			INIT_LIST_HEAD(&mp1_proc_list.list);
 
+			/* Initialize semaphore */
+			sema_init(&mp1_sem,1);
+
 			/* Create a kernel thread */
 			mp1_kernel_thread = kthread_run(mp1_kernel_thread_fn,
 							NULL,
 							"mp1kt");
 
 			if (mp1_kernel_thread == NULL) {
+				/* TBD: Cleanup? */
 				printk(KERN_INFO "thread not created\n");
 			}
+
+			/* Setup the timer */
+			setup_timer(&mp1_timer, mp1_timer_callback, 0);
 		}
 	}
 
@@ -175,6 +252,9 @@ static int __init mp1_init_module(void)
 static void __exit mp1_exit_module(void)
 {
 	MP1_PROC_ENTRY *tmp,*swap;
+
+	/* Delete the timer */
+	del_timer_sync(&mp1_timer);
 
 	/* Remove the status entry first */
 	remove_proc_entry("status", proc_dir);
