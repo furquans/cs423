@@ -158,25 +158,18 @@ int mp1_kernel_thread_fn(void *unused)
 		/* give up the control */
 		schedule();
 
-		/* Enter critical region */
-		if (down_interruptible(&mp1_sem)) {
-			printk(KERN_INFO "mp1: Cannot enter critical region\n");
-		}
-
 		/* coming back to running state, check if it needs to stop */
 		if (kthread_should_stop()) {
 			printk(KERN_INFO "mp1:thread needs to stop\n");
 			break;
 		}
+
 		printk(KERN_INFO "mp1:updating cpu time of processes\n");
 
-		/* Start the timer here */
-		ret = mod_timer(&mp1_timer, jiffies + msecs_to_jiffies(5000));
-
-                /* Not able to start the timer? */
-                if (ret) {
-                        printk(KERN_INFO "mp1:Error in mod_timer\n");
-                }
+		/* Enter critical region */
+		if (down_interruptible(&mp1_sem)) {
+			printk(KERN_INFO "mp1: Cannot enter critical region\n");
+		}
 
 		/* Traverse the list and update the cpu time for each registered
 		   process */
@@ -186,6 +179,19 @@ int mp1_kernel_thread_fn(void *unused)
 				printk(KERN_INFO "mp1:deleting %u\n",tmp->pid);
 				list_del(&tmp->list);
 				kfree(tmp);
+			}
+		}
+
+		if (list_empty(&mp1_proc_list.list)) {
+			/* If list is now empty, we need not start the timer */
+			printk(KERN_INFO "mp1:All entries removed. Not starting timer\n");
+		} else {
+			/* Start the timer here */
+			ret = mod_timer(&mp1_timer, jiffies + msecs_to_jiffies(5000));
+
+			/* Not able to start the timer? */
+			if (ret) {
+				printk(KERN_INFO "mp1:Error in mod_timer\n");
 			}
 		}
 
@@ -244,13 +250,16 @@ static int __init mp1_init_module(void)
 							NULL,
 							"mp1kt");
 
+			/* If thread creation failed for some reason, cleanup */
 			if (mp1_kernel_thread == NULL) {
-				/* TBD: Cleanup? */
 				printk(KERN_INFO "mp1:thread not created\n");
+				remove_proc_entry("status", proc_dir);
+				remove_proc_entry("mp1", NULL);
+				ret = -ENOMEM;
+			} else {
+				/* Setup the timer */
+				setup_timer(&mp1_timer, mp1_timer_callback, 0);
 			}
-
-			/* Setup the timer */
-			setup_timer(&mp1_timer, mp1_timer_callback, 0);
 		}
 	}
 
