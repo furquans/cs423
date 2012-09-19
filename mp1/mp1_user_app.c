@@ -1,7 +1,17 @@
+/*
+ * mp1_user_app.c: User application for mp1
+ *
+ */
+
 #include<stdio.h>
 #include<string.h>
 #include<stdlib.h>
 
+/*
+ * Func: register_process
+ * Desc: Registering the process with kernel module
+ *
+ */
 void register_process(int pid) {
         char command[100];
 	/* Write to /proc/mp1/status */
@@ -9,6 +19,11 @@ void register_process(int pid) {
         system(command);
 }
 
+/*
+ * Func: read_proc
+ * Desc: Reading back from the kernel module
+ *
+ */
 void read_proc()
 {
 	/* read from /proc/mp1/status */
@@ -18,6 +33,11 @@ void read_proc()
 	system(command);
 }
 
+/*
+ * Func: calculate_factorial
+ * Desc: Calcuate factorial of a given number n
+ *
+ */
 int calculate_factorial(int n) 
 {
 	int prod=1, i=1; 
@@ -30,14 +50,26 @@ int calculate_factorial(int n)
 	return prod; 
 }
 
-void find_factorial_factorial_times(int n, int fact) {
+/*
+ * Func: find_factorial_factorial_times
+ * Desc: Find factorial of a number for factorial times
+ *
+ */
+void find_factorial_factorial_times(int n, int fact)
+{
 	int i=0; 
+
 	for (i=0; i<=fact; i++) {
 		calculate_factorial(n); 
 	}
 	printf("Factorial of %d is calculated %d times !\n", n, calculate_factorial(n)); 
 }
 
+/*
+ * Func: find_factorials
+ * Desc: Find factorials of numbers from 1 to n
+ *
+ */
 void find_factorials(int n) 
 {
 	int i;
@@ -48,6 +80,11 @@ void find_factorials(int n)
 	}
 }
 
+/*
+ * Func: main
+ * Desc: main body of the user space application
+ *
+ */
 void main(int argc, char **argv)
 {
 	int pid;
