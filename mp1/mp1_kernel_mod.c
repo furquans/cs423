@@ -27,6 +27,9 @@ static MP1_PROC_ENTRY mp1_proc_list;
 /* Kernel Thread */
 static struct task_struct *mp1_kernel_thread;
 
+/* Wait queue for kernel thread to wait on */
+static DECLARE_WAIT_QUEUE_HEAD (mp1_waitqueue);
+
 /* Timer for waking kernel thread periodically */
 static struct timer_list mp1_timer;
 
@@ -40,7 +43,7 @@ static struct semaphore mp1_sem;
 void mp1_timer_callback(unsigned long data)
 {
 	/* Put the kernel thread into running state */
-	wake_up_process(mp1_kernel_thread);
+	wake_up_interruptible(&mp1_waitqueue);
 }
 
 /* Func: mp1_read_proc
@@ -142,6 +145,12 @@ int mp1_kernel_thread_fn(void *unused)
 	MP1_PROC_ENTRY *tmp, *swap;
 	int ret;
 
+	/* Declare a waitqueue */
+	DECLARE_WAITQUEUE(wait,current);
+
+	/* Add wait queue to the head */
+	add_wait_queue(&mp1_waitqueue,&wait);
+
 	while(1) {
 		/* Set current state to interruptible */
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -192,6 +201,8 @@ int mp1_kernel_thread_fn(void *unused)
 
 	/* exiting thread, set it to running state */
 	set_current_state(TASK_RUNNING);
+	/* remove the waitqueue */
+	remove_wait_queue(&mp1_waitqueue, &wait);
 
 	printk(KERN_INFO "mp1:thread killed\n");
 	return 0;
@@ -282,7 +293,7 @@ static void __exit mp1_exit_module(void)
 	}
 
 	/* Before stopping the thread, put it into running state */
-	wake_up_process(mp1_kernel_thread);
+	wake_up_interruptible(&mp1_waitqueue);
 
 	/* now stop the thread */
 	kthread_stop(mp1_kernel_thread);
