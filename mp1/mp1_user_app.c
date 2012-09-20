@@ -88,7 +88,7 @@ void find_factorials(int n)
 void main(int argc, char **argv)
 {
 	int pid;
-	int n = 13;
+	int n = 12;
 
 	/* Obtain the number to calculate factorial upto */
 	if (argc==2) {
