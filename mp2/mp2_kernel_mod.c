@@ -72,6 +72,63 @@ int mp2_read_proc(char *page, char **start, off_t off,
 	return len;
 }
 
+void mp2_add_task_to_rq(struct mp2_task_struct *tmp)
+{
+	struct list_head *prev, *curr;
+	struct mp2_task_struct *curr_task;
+
+	tmp->state = MP2_TASK_READY;
+
+	prev = &mp2_task_struct_list;
+	curr = prev->next;
+	list_for_each(curr, &mp2_rq) {
+		curr_task = list_entry(curr, typeof(*tmp), task_list);
+
+		if (curr_task->P > tmp->P) {
+			break;
+		}
+		prev = curr;
+	}
+
+	__list_add(&(tmp->task_list),prev,curr);
+
+}
+
+struct mp2_task_struct *find_mp2_task_by_pid(unsigned int pid)
+{
+	struct mp2_task_struct *tmp;
+
+	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
+		if (tmp->pid == pid) {
+			break;
+		}
+	}
+
+	if (&tmp->task_list == &mp2_task_struct_list) {
+		printk(KERN_INFO "mp2: Task not found on list\n");
+		tmp = NULL;
+	}
+
+	return tmp;
+}
+
+void wakeup_timer_handler(unsigned long pid)
+{
+	struct mp2_task_struct *tmp = find_mp2_task_by_pid(pid);
+
+	if (tmp == NULL) {
+		printk(KERN_WARNING "mp2: task not found..strange!\n");
+		return;
+	}
+
+	tmp->state = MP2_TASK_READY;
+
+	mp2_add_task_to_rq(tmp);
+
+	/* Wake up kernel scheduler thread */
+	wake_up_interruptible(&mp2_waitqueue);
+}
+
 void mp2_register_process(char *user_data)
 {
 	char *tmp;
@@ -119,6 +176,9 @@ void mp2_register_process(char *user_data)
 	/* Add entry to the list */
 	list_add_tail(&(new_task->task_list), &mp2_task_struct_list);
 
+	/* Setup the timer for this task */
+	setup_timer(&new_task->wakeup_timer, wakeup_timer_handler, new_task->pid);
+
 	/* Set task state to uninterruptible */
 	set_task_state(new_task->task, TASK_UNINTERRUPTIBLE);
 
@@ -156,59 +216,44 @@ void mp2_deregister_process(char *user_data)
 void mp2_yield_process(char *user_data)
 {
 	unsigned int pid;
-	struct mp2_task_struct *tmp,*swap;
+	struct mp2_task_struct *tmp;
 	u64 release_time;
 
 	/* Extract PID */
 	sscanf(user_data+3, "%u", &pid);
 
 	/* Check if this is the current running process */
-	if (mp2_current->pid == pid) {
+	if (mp2_current && (mp2_current->pid == pid)) {
 		tmp = mp2_current;
 	} else {
 		/* Else check on the mp2_task_struct_list */
-		list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
-			if (tmp->pid == pid) {
-				break;
-			}
-		}
+		tmp = find_mp2_task_by_pid(pid);
 	}
 
+	/* If process is not found on the list, something is wrong */
 	if (tmp == NULL) {
 		printk(KERN_WARNING "mp2: Task not found for yield:%u\n",pid);
 		return;
 	}
 
+	/* Check if we still have time for next release */
 	if (jiffies < tmp->next_period) {
+		/* If yes, put this task in sleep state
+		   and start the timer */
 		release_time = tmp->next_period - jiffies;
-
 		printk(KERN_INFO "mp2: release_time:%llu\n", release_time);
+
+		tmp->state = MP2_TASK_SLEEPING;
 	} else {
 		/* Process needs to be on run queue
 		   If in sleeping state, move it to run queue
 		*/
-		struct list_head *prev, *curr;
-		struct mp2_task_struct *curr_task;
-
 		if (tmp->state == MP2_TASK_SLEEPING) {
-			tmp->state = MP2_TASK_READY;
-
-			prev = &mp2_task_struct_list;
-			curr = prev->next;
-			list_for_each(curr, &mp2_rq) {
-				curr_task = list_entry(curr, typeof(*tmp), task_list);
-
-				if (curr_task->P > tmp->P) {
-					break;
-				}
-				prev = curr;
-			}
-
-			__list_add(&(tmp->task_list),prev,curr);
+			mp2_add_task_to_rq(tmp);
 		}
 	}
 
-	printk(KERN_INFO "mp2: Yield\n");
+	printk(KERN_INFO "mp2: Yield for %u\n",pid);
 }
 
 int mp2_write_proc(struct file *filp, const char __user *buff,
