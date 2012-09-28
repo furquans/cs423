@@ -34,6 +34,13 @@ void deregister_process(unsigned int pid)
 	write(fd,command,strlen(command));
 }
 
+void yield_process(unsigned int pid)
+{
+	char command[100];
+	sprintf(command, "Y, %d",pid);
+	write(fd,command,strlen(command));
+}
+
 /*
  * Func: read_proc
  * Desc: Reading back from the kernel module
@@ -97,6 +104,12 @@ int main(int argc, char **argv)
 
 	/* Read proc entry and check if we are registered */
 	read_proc(pid);
+
+	yield_process(pid);
+
+	while(1) {
+		printf("loop\n");
+	}
 
 	/* Deregister process */
 	deregister_process(pid);

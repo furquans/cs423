@@ -6,19 +6,21 @@
 #include <linux/proc_fs.h>
 #include <asm/uaccess.h>
 #include <linux/sched.h>
+#include <linux/kthread.h>
+#include <linux/list.h>
 
-/* Entries in procfs */
-static struct proc_dir_entry *proc_dir, *proc_entry;
+#include "mp2_given.h"
 
-/* List for holding all the tasks registered with MP2 module */
-struct list_head mp2_task_struct_list;
+#define MP2_TASK_RUNNING  0
+#define MP2_TASK_READY    1
+#define MP2_TASK_SLEEPING 2
 
 /* MP2 task struct */
 struct mp2_task_struct {
 	/* PID of the registered process */
 	unsigned int pid;
 	/* Pointer to the task_struct of the process */
-	struct task_struct *linux_task;
+	struct task_struct *task;
 	/* Timer to wake up this process at the end of period */
 	struct timer_list wakeup_timer;
 	/* Computation time in milliseconds */
@@ -26,8 +28,30 @@ struct mp2_task_struct {
 	/* Period of the process */
 	unsigned int P;
 	/* List head for maintaining list of all registered processes */
-	struct list_head list;
+	struct list_head task_list;
+	/* Time of next period in jiffies */
+	u64 next_period;
+	/* MP2 state of the task */
+	unsigned int state;
 };
+
+/* Entries in procfs */
+static struct proc_dir_entry *proc_dir, *proc_entry;
+
+/* List for holding all the tasks registered with MP2 module */
+static struct list_head mp2_task_struct_list;
+
+/* Run queue list for the scheduler */
+static struct list_head mp2_rq;
+
+/* Currently running process */
+static struct mp2_task_struct *mp2_current;
+
+/* Wait queue for kernel thread to wait on */
+static DECLARE_WAIT_QUEUE_HEAD (mp2_waitqueue);
+
+/* Kernel Thread */
+static struct task_struct *mp2_sched_kthread;
 
 
 int mp2_read_proc(char *page, char **start, off_t off,
@@ -37,7 +61,7 @@ int mp2_read_proc(char *page, char **start, off_t off,
 	struct mp2_task_struct *tmp;
 
 	/* Traverse the list and put values into page */
-        list_for_each_entry(tmp, &mp2_task_struct_list, list) {
+        list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
 		len += sprintf(page+len, "Process # %d details:\n",i);
 		len += sprintf(page+len, "PID:%u\n",tmp->pid);
 		len += sprintf(page+len, "P:%u\n",tmp->P);
@@ -81,8 +105,25 @@ void mp2_register_process(char *user_data)
 	       new_task->P,
 	       new_task->C);
 
+	/* Find the task struct */
+	new_task->task = find_task_by_pid(new_task->pid);
+
+	if (new_task->task == NULL) {
+		printk(KERN_WARNING "mp2: Task not found\n");
+		kfree(new_task);
+		return;
+	}
+
+	new_task->next_period = jiffies + msecs_to_jiffies(new_task->P);
+
 	/* Add entry to the list */
-	list_add_tail(&(new_task->list), &mp2_task_struct_list);
+	list_add_tail(&(new_task->task_list), &mp2_task_struct_list);
+
+	/* Set task state to uninterruptible */
+	set_task_state(new_task->task, TASK_UNINTERRUPTIBLE);
+
+	/* Mark mp2 task state as sleeping */
+	new_task->state = MP2_TASK_SLEEPING;
 }
 
 void mp2_deregister_process(char *user_data)
@@ -95,10 +136,10 @@ void mp2_deregister_process(char *user_data)
 	sscanf(user_data+3, "%u", &pid);
 
 	/* Check if PID exists and remove from the list */
-	list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, list) {
+	list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
 		if (tmp->pid == pid) {
 			printk(KERN_INFO "mp2: De-registration for PID:%u\n", pid);
-			list_del(&tmp->list);
+			list_del(&tmp->task_list);
 			kfree(tmp);
 			done = 1;
 			break;
@@ -114,6 +155,59 @@ void mp2_deregister_process(char *user_data)
 
 void mp2_yield_process(char *user_data)
 {
+	unsigned int pid;
+	struct mp2_task_struct *tmp,*swap;
+	u64 release_time;
+
+	/* Extract PID */
+	sscanf(user_data+3, "%u", &pid);
+
+	/* Check if this is the current running process */
+	if (mp2_current->pid == pid) {
+		tmp = mp2_current;
+	} else {
+		/* Else check on the mp2_task_struct_list */
+		list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
+			if (tmp->pid == pid) {
+				break;
+			}
+		}
+	}
+
+	if (tmp == NULL) {
+		printk(KERN_WARNING "mp2: Task not found for yield:%u\n",pid);
+		return;
+	}
+
+	if (jiffies < tmp->next_period) {
+		release_time = tmp->next_period - jiffies;
+
+		printk(KERN_INFO "mp2: release_time:%llu\n", release_time);
+	} else {
+		/* Process needs to be on run queue
+		   If in sleeping state, move it to run queue
+		*/
+		struct list_head *prev, *curr;
+		struct mp2_task_struct *curr_task;
+
+		if (tmp->state == MP2_TASK_SLEEPING) {
+			tmp->state = MP2_TASK_READY;
+
+			prev = &mp2_task_struct_list;
+			curr = prev->next;
+			list_for_each(curr, &mp2_rq) {
+				curr_task = list_entry(curr, typeof(*tmp), task_list);
+
+				if (curr_task->P > tmp->P) {
+					break;
+				}
+				prev = curr;
+			}
+
+			__list_add(&(tmp->task_list),prev,curr);
+		}
+	}
+
 	printk(KERN_INFO "mp2: Yield\n");
 }
 
@@ -156,6 +250,42 @@ int mp2_write_proc(struct file *filp, const char __user *buff,
 	return len;
 }
 
+int mp2_sched_kthread_fn(void *unused)
+{
+	/* Declare a wait queue */
+	DECLARE_WAITQUEUE(wait,current);
+
+	/* Add wait queue to the head */
+	add_wait_queue(&mp2_waitqueue,&wait);
+
+	printk(KERN_INFO "mp2: Schedule Thread created\n");
+
+	while (1) {
+		/* Set current state to interruptible */
+		set_current_state(TASK_INTERRUPTIBLE);
+
+		/* give up the control */
+		schedule();
+
+		/* coming back to running state, check if it needs to stop */
+		if (kthread_should_stop()) {
+                        printk(KERN_INFO "mp2: Thread needs to stop\n");
+                        break;
+                }
+
+		printk(KERN_INFO "mp2: Schedule function running\n");
+	}
+
+	/* exiting thread, set it to running state */
+        set_current_state(TASK_RUNNING);
+
+        /* remove the waitqueue */
+        remove_wait_queue(&mp2_waitqueue, &wait);
+
+        printk(KERN_INFO "mp2: Schedule thread killed\n");
+        return 0;
+}
+
 static int __init mp2_init_module(void)
 {
 	int ret = 0;
@@ -184,6 +314,17 @@ static int __init mp2_init_module(void)
 			/* Initialize list head for MP2 task struct */
 			INIT_LIST_HEAD(&mp2_task_struct_list);
 
+			/* Initialize list head for MP2 run queue */
+			INIT_LIST_HEAD(&mp2_rq);
+
+			/* Initialize current running mp2 task as NULL */
+			mp2_current = NULL;
+
+                        /* Create a kernel thread */
+                        mp2_sched_kthread = kthread_run(mp2_sched_kthread_fn,
+                                                        NULL,
+                                                        "mp2_sched_kthread");
+
 			/* MP2 module is now loaded */
 			printk(KERN_INFO "mp2: Module loaded\n");
 		}
@@ -199,15 +340,21 @@ static void __exit mp2_exit_module(void)
 	/* Remove the status entry first */
 	remove_proc_entry("status", proc_dir);
 
-	/* Remove the mp1 proc dir now */
+	/* Remove the mp2 proc dir now */
 	remove_proc_entry("mp2", NULL);
 
 	/* Delete each list entry and free the allocated structure */
-        list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, list) {
+        list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
 		printk(KERN_INFO "mp2: freeing %u\n",tmp->pid);
-		list_del(&tmp->list);
+		list_del(&tmp->task_list);
 		kfree(tmp);
         }
+
+	/* Before stopping the thread, put it into running state */
+        wake_up_interruptible(&mp2_waitqueue);
+
+        /* now stop the thread */
+        kthread_stop(mp2_sched_kthread);
 
 	printk(KERN_INFO "mp2: Module unloaded\n");
 }
