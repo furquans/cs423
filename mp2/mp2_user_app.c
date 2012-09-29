@@ -49,12 +49,12 @@ void yield_process(unsigned int pid)
 int read_proc(unsigned int pid)
 {
 	int len = 0;
-        char command[100];
+        char command[4096];
 	char *ptr;
 	char pid_str[20];
 	int ret = 0;
 
-	len = read(fd,command,100);
+	len = read(fd,command,4096);
 	command[len] = '\0';
 
         printf("Printing return value of read from /proc/mp2/status\n");
@@ -140,7 +140,9 @@ int main(int argc, char **argv)
 	n = atoi(argv[3]);
 
 	/* Read proc entry and check if we are registered */
-	read_proc(pid);
+	if (read_proc(pid) == 0) {
+		exit(1);
+	}
 
 	gettimeofday(&t0,NULL);
 
