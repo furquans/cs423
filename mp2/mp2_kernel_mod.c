@@ -93,17 +93,10 @@ void mp2_add_task_to_rq(struct mp2_task_struct *tmp)
 	}
 
 	__list_add(&(tmp->mp2_rq_list),prev,curr);
-
-	if (list_empty(&mp2_rq)) {
-		printk(KERN_INFO "list is empty\n");
-	} else {
-		printk(KERN_INFO "something on list\n");
-	}
 }
 
 void mp2_remove_task_from_rq(struct mp2_task_struct *tmp)
 {
-	printk(KERN_INFO "removing from rq\n");
 	list_del(&(tmp->mp2_rq_list));
 }
 
@@ -198,37 +191,44 @@ void mp2_register_process(char *user_data)
 	new_task->state = MP2_TASK_SLEEPING;
 }
 
+void mp2_set_sched_priority(struct mp2_task_struct *tmp,
+			    int policy,
+			    int priority)
+{
+	struct sched_param sparam;
+
+	sparam.sched_priority = priority;
+	sched_setscheduler(tmp->task, policy, &sparam);
+}
+
 void mp2_deregister_process(char *user_data)
 {
 	unsigned int pid;
-	struct mp2_task_struct *tmp, *swap;
-	char done = 0;
+	struct mp2_task_struct *tmp;
 
 	/* Extract PID */
 	sscanf(user_data+3, "%u", &pid);
 
-	/* Check if PID exists and remove from the list */
-	list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
-		if (tmp->pid == pid) {
-			printk(KERN_INFO "mp2: De-registration for PID:%u\n", pid);
-			mp2_remove_task_from_rq(tmp);
-			list_del(&tmp->task_list);
-			/* Delete the timer */
-			del_timer_sync(&tmp->wakeup_timer);
-			if (tmp == mp2_current) {
-				struct sched_param sparam;
-				sparam.sched_priority = 0;
-				sched_setscheduler(tmp->task, SCHED_NORMAL, &sparam);
-				mp2_current = NULL;
-			}
-			kfree(tmp);
-			done = 1;
-			break;
-		}
-        }
+	/* Find the mp2 task struct for this pid */
+	tmp = find_mp2_task_by_pid(pid);
 
-	/* If process not found, report back to user */
-	if (done == 0) {
+	if (tmp) {
+		printk(KERN_INFO "mp2: De-registration for PID:%u\n", pid);
+		/* Remove the task from run queue */
+		mp2_remove_task_from_rq(tmp);
+		/* Delete the task from mp2 task struct list */
+		list_del(&tmp->task_list);
+		/* Delete the timer */
+		del_timer_sync(&tmp->wakeup_timer);
+		if (tmp == mp2_current) {
+			/* Reset the priority to normal */
+			mp2_set_sched_priority(tmp, SCHED_NORMAL, 0);
+			mp2_current = NULL;
+		}
+		/* Free the structure */
+		kfree(tmp);
+	} else {
+		/* Deregister only registered processes */
 		printk(KERN_INFO "mp2: No process with P:%u registered\n", pid);
 	}
 
