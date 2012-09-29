@@ -84,12 +84,47 @@ int read_proc(unsigned int pid)
 	return ret;
 }
 
+double time_diff(struct timeval *prev,
+		 struct timeval *curr)
+{
+	double diff;
+
+	if(prev->tv_sec > curr->tv_sec) {
+		printf("here\n");
+	}
+
+        diff = (curr->tv_sec*1000.0 + curr->tv_usec/1000.0) -
+                (prev->tv_sec*1000.0 + prev->tv_usec/1000.0);
+
+        return diff;
+}
+
+unsigned long long fact(unsigned long long n)
+{
+        if((n==1) || (n==0))
+                return 1;
+        return(n*fact(n-1));
+}
+
+void calc_fact(int n)
+{
+	unsigned long long p = fact(n);
+	int i;
+
+        for(i=1;i<p;i++) {
+                p = fact(n);
+        }
+	printf("done\n");
+}
+
 int main(int argc, char **argv)
 {
 	unsigned int pid;
+	struct timeval curr,t0;
+	int i = 0,n;
 
-	if (argc != 3) {
-		printf("Usage:%s <P> <C>\n",argv[0]);
+	if (argc != 4) {
+		printf("Usage:%s <P> <C> <n>\n",argv[0]);
 		exit(1);
 	}
 
@@ -102,13 +137,19 @@ int main(int argc, char **argv)
 	/* Register process with kernel module */
 	register_process(pid, atoi(argv[1]), atoi(argv[2]));
 
+	n = atoi(argv[3]);
+
 	/* Read proc entry and check if we are registered */
 	read_proc(pid);
 
-	yield_process(pid);
+	gettimeofday(&t0,NULL);
 
-	while(1) {
-		printf("loop\n");
+	while(i<10) {
+		yield_process(pid);
+		gettimeofday(&curr,NULL);
+		printf("time=  %f msecs since start\n",time_diff(&t0,&curr));
+		calc_fact(n);
+		i++;
 	}
 
 	/* Deregister process */

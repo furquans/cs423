@@ -29,6 +29,8 @@ struct mp2_task_struct {
 	unsigned int P;
 	/* List head for maintaining list of all registered processes */
 	struct list_head task_list;
+	/* List head for run queue */
+	struct list_head mp2_rq_list;
 	/* Time of next period in jiffies */
 	u64 next_period;
 	/* MP2 state of the task */
@@ -79,10 +81,10 @@ void mp2_add_task_to_rq(struct mp2_task_struct *tmp)
 
 	tmp->state = MP2_TASK_READY;
 
-	prev = &mp2_task_struct_list;
+	prev = &mp2_rq;
 	curr = prev->next;
 	list_for_each(curr, &mp2_rq) {
-		curr_task = list_entry(curr, typeof(*tmp), task_list);
+		curr_task = list_entry(curr, typeof(*tmp), mp2_rq_list);
 
 		if (curr_task->P > tmp->P) {
 			break;
@@ -90,8 +92,19 @@ void mp2_add_task_to_rq(struct mp2_task_struct *tmp)
 		prev = curr;
 	}
 
-	__list_add(&(tmp->task_list),prev,curr);
+	__list_add(&(tmp->mp2_rq_list),prev,curr);
 
+	if (list_empty(&mp2_rq)) {
+		printk(KERN_INFO "list is empty\n");
+	} else {
+		printk(KERN_INFO "something on list\n");
+	}
+}
+
+void mp2_remove_task_from_rq(struct mp2_task_struct *tmp)
+{
+	printk(KERN_INFO "removing from rq\n");
+	list_del(&(tmp->mp2_rq_list));
 }
 
 struct mp2_task_struct *find_mp2_task_by_pid(unsigned int pid)
@@ -124,6 +137,8 @@ void wakeup_timer_handler(unsigned long pid)
 	tmp->state = MP2_TASK_READY;
 
 	mp2_add_task_to_rq(tmp);
+
+	printk(KERN_INFO "mp2: Task added to rq\n");
 
 	/* Wake up kernel scheduler thread */
 	wake_up_interruptible(&mp2_waitqueue);
@@ -179,9 +194,6 @@ void mp2_register_process(char *user_data)
 	/* Setup the timer for this task */
 	setup_timer(&new_task->wakeup_timer, wakeup_timer_handler, new_task->pid);
 
-	/* Set task state to uninterruptible */
-	set_task_state(new_task->task, TASK_UNINTERRUPTIBLE);
-
 	/* Mark mp2 task state as sleeping */
 	new_task->state = MP2_TASK_SLEEPING;
 }
@@ -199,7 +211,16 @@ void mp2_deregister_process(char *user_data)
 	list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
 		if (tmp->pid == pid) {
 			printk(KERN_INFO "mp2: De-registration for PID:%u\n", pid);
+			mp2_remove_task_from_rq(tmp);
 			list_del(&tmp->task_list);
+			/* Delete the timer */
+			del_timer_sync(&tmp->wakeup_timer);
+			if (tmp == mp2_current) {
+				struct sched_param sparam;
+				sparam.sched_priority = 0;
+				sched_setscheduler(tmp->task, SCHED_NORMAL, &sparam);
+				mp2_current = NULL;
+			}
 			kfree(tmp);
 			done = 1;
 			break;
@@ -238,12 +259,28 @@ void mp2_yield_process(char *user_data)
 
 	/* Check if we still have time for next release */
 	if (jiffies < tmp->next_period) {
+		struct sched_param sparam;
 		/* If yes, put this task in sleep state
+		   remove it from rq(if present there,
 		   and start the timer */
 		release_time = tmp->next_period - jiffies;
 		printk(KERN_INFO "mp2: release_time:%llu\n", release_time);
 
 		tmp->state = MP2_TASK_SLEEPING;
+
+		mod_timer(&tmp->wakeup_timer, jiffies + release_time);
+		if (mp2_current && (mp2_current->pid == tmp->pid)) {
+			mp2_remove_task_from_rq(tmp);
+			printk(KERN_INFO "removed from rq\n");
+			wake_up_interruptible(&mp2_waitqueue);
+		} //else {
+
+			sparam.sched_priority = 0;
+			sched_setscheduler(tmp->task, SCHED_NORMAL, &sparam);
+
+			set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
+			schedule();
+			//}
 	} else {
 		/* Process needs to be on run queue
 		   If in sleeping state, move it to run queue
@@ -297,6 +334,8 @@ int mp2_write_proc(struct file *filp, const char __user *buff,
 
 int mp2_sched_kthread_fn(void *unused)
 {
+	struct mp2_task_struct *tmp;
+
 	/* Declare a wait queue */
 	DECLARE_WAITQUEUE(wait,current);
 
@@ -319,6 +358,35 @@ int mp2_sched_kthread_fn(void *unused)
                 }
 
 		printk(KERN_INFO "mp2: Schedule function running\n");
+		/* If there is some task running currenly,
+		   put it into sleep state */
+		if (mp2_current) {
+			struct sched_param sparam;
+
+			sparam.sched_priority = 0;
+			sched_setscheduler(mp2_current->task, SCHED_NORMAL, &sparam);
+			set_task_state(mp2_current->task, TASK_UNINTERRUPTIBLE);
+			mp2_current->state = MP2_TASK_SLEEPING;
+			mp2_current = NULL;
+		}
+
+		/* Check if we have anything on the runqueue */
+		if (!list_empty(&mp2_rq)) {
+			/* If there is a task waiting on the run queue, */
+			/*    schedule it */
+			struct sched_param sparam;
+			tmp = list_first_entry(&mp2_rq, typeof(*tmp), mp2_rq_list);
+			wake_up_process(tmp->task);
+			sparam.sched_priority = MAX_USER_RT_PRIO - 1;
+			sched_setscheduler(tmp->task, SCHED_FIFO, &sparam);
+			mp2_current = tmp;
+			mp2_current->state = MP2_TASK_RUNNING;
+			mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
+		} else {
+			printk(KERN_INFO "nothing on runqueue\n");
+		}
+
+		schedule();
 	}
 
 	/* exiting thread, set it to running state */
