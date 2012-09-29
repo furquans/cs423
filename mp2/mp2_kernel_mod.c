@@ -137,6 +137,20 @@ void wakeup_timer_handler(unsigned long pid)
 	wake_up_interruptible(&mp2_waitqueue);
 }
 
+bool mp2_admission_control(new_task->C, new_task->P) {
+	struct mp2_task_struct *tmp;
+	long new_total_utilization = ((new_task->C)*1000)/(new_task->P); 
+
+	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
+		new_total_utilization += ((tmp->C)*1000)/(tmp->P);
+	}
+	
+	if (new_total_utilization>693) {
+		return false; 
+	}
+	return true; 		
+}
+
 void mp2_register_process(char *user_data)
 {
 	char *tmp;
@@ -164,6 +178,13 @@ void mp2_register_process(char *user_data)
 	/* Advance to Computation time in the string */
 	user_data = tmp + 2;
 	sscanf(user_data, "%u", &new_task->C);
+
+	if (mp2_admission_control(new_task->C, new_task->P)==false) {
+		printk(KERN_WARNING "mp2: Registration for PID:%u failed during Admission Control",
+		new_task->pid);
+		kfree(new_task); 
+		return; 
+	}
 
 	printk(KERN_INFO "mp2: Registration for PID:%u with P:%u and C:%u\n",
 	       new_task->pid,
