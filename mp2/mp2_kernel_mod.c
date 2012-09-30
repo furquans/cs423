@@ -137,9 +137,9 @@ void wakeup_timer_handler(unsigned long pid)
 	wake_up_interruptible(&mp2_waitqueue);
 }
 
-bool mp2_admission_control(new_task->C, new_task->P) {
+bool mp2_admission_control(unsigned int C, unsigned int P) {
 	struct mp2_task_struct *tmp;
-	long new_total_utilization = ((new_task->C)*1000)/(new_task->P); 
+	long new_total_utilization = (C*1000)/P; 
 
 	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
 		new_total_utilization += ((tmp->C)*1000)/(tmp->P);
