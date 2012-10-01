@@ -108,12 +108,12 @@ unsigned long long fact(unsigned long long n)
 
 void calc_fact(int n)
 {
-	unsigned long long p = fact(n);
-	int i;
+	unsigned long long i,p = fact(n);
 
         for(i=1;i<p;i++) {
-                p = fact(n);
+                fact(n);
         }
+	printf("fact=%d\n",p);
 	printf("done\n");
 }
 

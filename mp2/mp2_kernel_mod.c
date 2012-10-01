@@ -55,12 +55,22 @@ static DECLARE_WAIT_QUEUE_HEAD (mp2_waitqueue);
 /* Kernel Thread */
 static struct task_struct *mp2_sched_kthread;
 
+/* Semaphore for synchronization on the list */
+static struct semaphore mp2_sem;
+
+static unsigned long flags;
 
 int mp2_read_proc(char *page, char **start, off_t off,
 		  int count, int *eof, void *data)
 {
 	int len = 0, i=1;
 	struct mp2_task_struct *tmp;
+
+	/* Enter critical region */
+        if (down_interruptible(&mp2_sem)) {
+                printk(KERN_INFO "mp2:Unable to enter critical region\n");
+                return 0;
+        }
 
 	/* Traverse the list and put values into page */
         list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
@@ -70,6 +80,9 @@ int mp2_read_proc(char *page, char **start, off_t off,
 		len += sprintf(page+len, "C:%u\n",tmp->C);
 		i++;
         }
+
+        /* Exit critical region */
+        up(&mp2_sem);
 
 	return len;
 }
@@ -104,6 +117,12 @@ struct mp2_task_struct *find_mp2_task_by_pid(unsigned int pid)
 {
 	struct mp2_task_struct *tmp;
 
+	/* Enter critical region */
+        if (down_interruptible(&mp2_sem)) {
+                printk(KERN_INFO "mp2:Unable to enter critical region\n");
+                return 0;
+        }
+
 	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
 		if (tmp->pid == pid) {
 			break;
@@ -114,6 +133,9 @@ struct mp2_task_struct *find_mp2_task_by_pid(unsigned int pid)
 		printk(KERN_INFO "mp2: Task not found on list\n");
 		tmp = NULL;
 	}
+
+	/* Exit critical region */
+	up(&mp2_sem);
 
 	return tmp;
 }
@@ -131,7 +153,7 @@ void wakeup_timer_handler(unsigned long pid)
 
 	mp2_add_task_to_rq(tmp);
 
-	printk(KERN_INFO "mp2: Task added to rq\n");
+	printk(KERN_INFO "mp2: Task added to rq:%d\n",tmp->pid);
 
 	/* Wake up kernel scheduler thread */
 	wake_up_interruptible(&mp2_waitqueue);
@@ -139,16 +161,16 @@ void wakeup_timer_handler(unsigned long pid)
 
 bool mp2_admission_control(unsigned int C, unsigned int P) {
 	struct mp2_task_struct *tmp;
-	long new_total_utilization = (C*1000)/P; 
+	long new_total_utilization = (C*1000)/P;
 
 	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
 		new_total_utilization += ((tmp->C)*1000)/(tmp->P);
 	}
-	
+
 	if (new_total_utilization>693) {
-		return false; 
+		return false;
 	}
-	return true; 		
+	return true;
 }
 
 void mp2_register_process(char *user_data)
@@ -182,8 +204,8 @@ void mp2_register_process(char *user_data)
 	if (mp2_admission_control(new_task->C, new_task->P)==false) {
 		printk(KERN_WARNING "mp2: Registration for PID:%u failed during Admission Control",
 		new_task->pid);
-		kfree(new_task); 
-		return; 
+		kfree(new_task);
+		return;
 	}
 
 	printk(KERN_INFO "mp2: Registration for PID:%u with P:%u and C:%u\n",
@@ -202,8 +224,17 @@ void mp2_register_process(char *user_data)
 
 	new_task->next_period = jiffies + msecs_to_jiffies(new_task->P);
 
+	/* Enter critical region */
+        if (down_interruptible(&mp2_sem)) {
+                printk(KERN_INFO "mp2:Unable to enter critical region\n");
+                return;
+        }
+
 	/* Add entry to the list */
 	list_add_tail(&(new_task->task_list), &mp2_task_struct_list);
+
+	/* Exit critical region */
+	up(&mp2_sem);
 
 	/* Setup the timer for this task */
 	setup_timer(&new_task->wakeup_timer, wakeup_timer_handler, new_task->pid);
@@ -236,9 +267,20 @@ void mp2_deregister_process(char *user_data)
 	if (tmp) {
 		printk(KERN_INFO "mp2: De-registration for PID:%u\n", pid);
 		/* Remove the task from run queue */
+		local_irq_save(flags);
+		local_irq_disable();
 		mp2_remove_task_from_rq(tmp);
+		local_irq_restore(flags);
+		local_irq_enable();
+		/* Enter critical region */
+		if (down_interruptible(&mp2_sem)) {
+			printk(KERN_INFO "mp2:Unable to enter critical region\n");
+			return;
+		}
 		/* Delete the task from mp2 task struct list */
 		list_del(&tmp->task_list);
+		/* Exit critical region */
+		up(&mp2_sem);
 		/* Delete the timer */
 		del_timer_sync(&tmp->wakeup_timer);
 		if (tmp == mp2_current) {
@@ -280,35 +322,50 @@ void mp2_yield_process(char *user_data)
 
 	/* Check if we still have time for next release */
 	if (jiffies < tmp->next_period) {
-		struct sched_param sparam;
 		/* If yes, put this task in sleep state
 		   remove it from rq(if present there,
 		   and start the timer */
 		release_time = tmp->next_period - jiffies;
-		printk(KERN_INFO "mp2: release_time:%llu\n", release_time);
+		printk(KERN_INFO "mp2: release_time:%llu,%d\n", release_time,tmp->pid);
 
+		/* Change the task state to SLEEPING */
 		tmp->state = MP2_TASK_SLEEPING;
 
+		/* Start the timer according to release time */
 		mod_timer(&tmp->wakeup_timer, jiffies + release_time);
+
+		/* If this task was currently executing,
+		   remove it from run queue and wake up
+		   scheduler thread */
 		if (mp2_current && (mp2_current->pid == tmp->pid)) {
+			local_irq_save(flags);
+			local_irq_disable();
 			mp2_remove_task_from_rq(tmp);
+			local_irq_restore(flags);
+			local_irq_enable();
 			printk(KERN_INFO "removed from rq\n");
+			mp2_current = NULL;
 			wake_up_interruptible(&mp2_waitqueue);
-		} //else {
+		}
 
-			sparam.sched_priority = 0;
-			sched_setscheduler(tmp->task, SCHED_NORMAL, &sparam);
+		/* Lower the priority of the task */
+		mp2_set_sched_priority(tmp, SCHED_NORMAL, 0);
 
-			set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
-			schedule();
-			//}
+		set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
+		schedule();
 	} else {
 		/* Process needs to be on run queue
 		   If in sleeping state, move it to run queue
 		*/
 		if (tmp->state == MP2_TASK_SLEEPING) {
+			tmp->state = MP2_TASK_READY;
+			local_irq_save(flags);
+			local_irq_disable();
 			mp2_add_task_to_rq(tmp);
+			local_irq_restore(flags);
+			local_irq_enable();
 		}
+		wake_up_interruptible(&mp2_waitqueue);
 	}
 
 	printk(KERN_INFO "mp2: Yield for %u\n",pid);
@@ -379,29 +436,38 @@ int mp2_sched_kthread_fn(void *unused)
                 }
 
 		printk(KERN_INFO "mp2: Schedule function running\n");
-		/* If there is some task running currenly,
-		   put it into sleep state */
-		if (mp2_current) {
-			struct sched_param sparam;
-
-			sparam.sched_priority = 0;
-			sched_setscheduler(mp2_current->task, SCHED_NORMAL, &sparam);
-			set_task_state(mp2_current->task, TASK_UNINTERRUPTIBLE);
-			mp2_current->state = MP2_TASK_SLEEPING;
-			mp2_current = NULL;
-		}
 
 		/* Check if we have anything on the runqueue */
 		if (!list_empty(&mp2_rq)) {
-			/* If there is a task waiting on the run queue, */
-			/*    schedule it */
-			struct sched_param sparam;
+			/* If there is a task waiting on the run queue,
+			   and has a higher priority than current running task if any
+			   schedule it */
+			local_irq_save(flags);
+			local_irq_disable();
 			tmp = list_first_entry(&mp2_rq, typeof(*tmp), mp2_rq_list);
+			local_irq_restore(flags);
+			local_irq_enable();
+			/* If there is some task running currenly,
+			   put it into ready state */
+			if (mp2_current) {
+				if (mp2_current->P > tmp->P) {
+					printk(KERN_INFO "mp2: Scheduling out current process\n");
+					mp2_set_sched_priority(mp2_current, SCHED_NORMAL, 0);
+					set_task_state(mp2_current->task, TASK_UNINTERRUPTIBLE);
+					mp2_current->state = MP2_TASK_READY;
+					mp2_current = NULL;
+				}
+				else {
+					printk(KERN_INFO "mp2: currently running process has higher prio\n");
+					continue;
+				}
+			}
+
 			wake_up_process(tmp->task);
-			sparam.sched_priority = MAX_USER_RT_PRIO - 1;
-			sched_setscheduler(tmp->task, SCHED_FIFO, &sparam);
+			mp2_set_sched_priority(tmp, SCHED_FIFO, MAX_USER_RT_PRIO - 1);
 			mp2_current = tmp;
 			mp2_current->state = MP2_TASK_RUNNING;
+			printk(KERN_INFO "next task running:%d\n",tmp->pid);
 			mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
 		} else {
 			printk(KERN_INFO "nothing on runqueue\n");
@@ -451,6 +517,9 @@ static int __init mp2_init_module(void)
 			/* Initialize list head for MP2 run queue */
 			INIT_LIST_HEAD(&mp2_rq);
 
+			/* Initialize semaphore */
+                        sema_init(&mp2_sem,1);
+
 			/* Initialize current running mp2 task as NULL */
 			mp2_current = NULL;
 
@@ -477,6 +546,12 @@ static void __exit mp2_exit_module(void)
 	/* Remove the mp2 proc dir now */
 	remove_proc_entry("mp2", NULL);
 
+	/* Enter critical region */
+        if (down_interruptible(&mp2_sem)) {
+                printk(KERN_INFO "mp2:Unable to enter critical region\n");
+                return;
+        }
+
 	/* Delete each list entry and free the allocated structure */
         list_for_each_entry_safe(tmp, swap, &mp2_task_struct_list, task_list) {
 		printk(KERN_INFO "mp2: freeing %u\n",tmp->pid);
@@ -484,13 +559,16 @@ static void __exit mp2_exit_module(void)
 		kfree(tmp);
         }
 
+	/* Exit critical region */
+	up(&mp2_sem);
+
 	/* Before stopping the thread, put it into running state */
         wake_up_interruptible(&mp2_waitqueue);
 
         /* now stop the thread */
         kthread_stop(mp2_sched_kthread);
 
-	printk(KERN_INFO "mp2: Module unloaded\n");
+ 	printk(KERN_INFO "mp2: Module unloaded\n");
 }
 
 module_init(mp2_init_module);
