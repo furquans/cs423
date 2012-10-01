@@ -322,16 +322,15 @@ void mp2_yield_process(char *user_data)
 			mp2_remove_task_from_rq(tmp);
 			local_irq_restore(flags);
 			local_irq_enable();
+
 			printk(KERN_INFO "removed from rq\n");
 			mp2_current = NULL;
 			wake_up_interruptible(&mp2_waitqueue);
 		}
-
 		/* Lower the priority of the task */
 		mp2_set_sched_priority(tmp, SCHED_NORMAL, 0);
 
 		set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
-		schedule();
 	} else {
 		/* Process needs to be on run queue
 		   If in sleeping state, move it to run queue
@@ -347,6 +346,7 @@ void mp2_yield_process(char *user_data)
 		wake_up_interruptible(&mp2_waitqueue);
 	}
 
+	schedule();
 	printk(KERN_INFO "mp2: Yield for %u\n",pid);
 }
 
@@ -402,6 +402,7 @@ int mp2_sched_kthread_fn(void *unused)
 	printk(KERN_INFO "mp2: Schedule Thread created\n");
 
 	while (1) {
+		printk(KERN_INFO "mp2: Schedule thread sleeping\n");
 		/* Set current state to interruptible */
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -453,8 +454,6 @@ int mp2_sched_kthread_fn(void *unused)
 		} else {
 			printk(KERN_INFO "nothing on runqueue\n");
 		}
-
-		schedule();
 	}
 
 	/* exiting thread, set it to running state */
