@@ -269,11 +269,11 @@ void mp2_deregister_process(char *user_data)
 		}
 		/* Free the structure */
 		kfree(tmp);
+		wake_up_interruptible(&mp2_waitqueue);
 	} else {
 		/* Deregister only registered processes */
 		printk(KERN_INFO "mp2: No process with P:%u registered\n", pid);
 	}
-
 }
 
 void mp2_yield_process(char *user_data)
