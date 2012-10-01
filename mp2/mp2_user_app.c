@@ -57,8 +57,8 @@ int read_proc(unsigned int pid)
 	len = read(fd,command,4096);
 	command[len] = '\0';
 
-        printf("Printing return value of read from /proc/mp2/status\n");
-	printf("%s",command);
+        /* printf("Printing return value of read from /proc/mp2/status\n"); */
+	/* printf("%s",command); */
 
 	sprintf(pid_str, "%u", pid);
 
@@ -68,14 +68,14 @@ int read_proc(unsigned int pid)
 		ptr = strstr(ptr, "PID:");
 
 		if (ptr == NULL) {
-			printf("Entry not found\n");
+			printf("Registration failed...exiting\n");
 			break;
 		}
 
 		if (strncmp(pid_str,
 			    ptr+4,
 			    strlen(pid_str)) == 0) {
-			printf("Found entry\n");
+			printf("Registration successful\n");
 			ret = 1;
 			break;
 		}
@@ -88,10 +88,6 @@ double time_diff(struct timeval *prev,
 		 struct timeval *curr)
 {
 	double diff;
-
-	if(prev->tv_sec > curr->tv_sec) {
-		printf("here\n");
-	}
 
         diff = (curr->tv_sec*1000.0 + curr->tv_usec/1000.0) -
                 (prev->tv_sec*1000.0 + prev->tv_usec/1000.0);
@@ -147,13 +143,15 @@ int main(int argc, char **argv)
 	gettimeofday(&t0,NULL);
 
 	while(i<10) {
+		printf("Process doing a yield\n");
 		yield_process(pid);
 		gettimeofday(&curr,NULL);
-		printf("time=  %f msecs since start\n",time_diff(&t0,&curr));
+		printf("time=  %lf msecs since start\n",time_diff(&t0,&curr));
 		calc_fact(n);
 		i++;
 	}
 
 	/* Deregister process */
 	deregister_process(pid);
+	printf("Process deregistered\n");
 }
