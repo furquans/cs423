@@ -159,6 +159,7 @@ void wakeup_timer_handler(unsigned long pid)
 	wake_up_interruptible(&mp2_waitqueue);
 }
 
+<<<<<<< HEAD
 bool mp2_admission_control(unsigned int C, unsigned int P) {
 	struct mp2_task_struct *tmp;
 	long new_total_utilization = (C*1000)/P;
@@ -173,6 +174,8 @@ bool mp2_admission_control(unsigned int C, unsigned int P) {
 	return true;
 }
 
+=======
+>>>>>>> parent of c073aba... Admission Control, Not tested
 void mp2_register_process(char *user_data)
 {
 	char *tmp;
@@ -201,6 +204,7 @@ void mp2_register_process(char *user_data)
 	user_data = tmp + 2;
 	sscanf(user_data, "%u", &new_task->C);
 
+<<<<<<< HEAD
 	if (mp2_admission_control(new_task->C, new_task->P)==false) {
 		printk(KERN_WARNING "mp2: Registration for PID:%u failed during Admission Control",
 		new_task->pid);
@@ -208,6 +212,8 @@ void mp2_register_process(char *user_data)
 		return;
 	}
 
+=======
+>>>>>>> parent of c073aba... Admission Control, Not tested
 	printk(KERN_INFO "mp2: Registration for PID:%u with P:%u and C:%u\n",
 	       new_task->pid,
 	       new_task->P,
