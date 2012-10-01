@@ -159,23 +159,6 @@ void wakeup_timer_handler(unsigned long pid)
 	wake_up_interruptible(&mp2_waitqueue);
 }
 
-<<<<<<< HEAD
-bool mp2_admission_control(unsigned int C, unsigned int P) {
-	struct mp2_task_struct *tmp;
-	long new_total_utilization = (C*1000)/P;
-
-	list_for_each_entry(tmp, &mp2_task_struct_list, task_list) {
-		new_total_utilization += ((tmp->C)*1000)/(tmp->P);
-	}
-
-	if (new_total_utilization>693) {
-		return false;
-	}
-	return true;
-}
-
-=======
->>>>>>> parent of c073aba... Admission Control, Not tested
 void mp2_register_process(char *user_data)
 {
 	char *tmp;
@@ -204,16 +187,6 @@ void mp2_register_process(char *user_data)
 	user_data = tmp + 2;
 	sscanf(user_data, "%u", &new_task->C);
 
-<<<<<<< HEAD
-	if (mp2_admission_control(new_task->C, new_task->P)==false) {
-		printk(KERN_WARNING "mp2: Registration for PID:%u failed during Admission Control",
-		new_task->pid);
-		kfree(new_task);
-		return;
-	}
-
-=======
->>>>>>> parent of c073aba... Admission Control, Not tested
 	printk(KERN_INFO "mp2: Registration for PID:%u with P:%u and C:%u\n",
 	       new_task->pid,
 	       new_task->P,
@@ -474,7 +447,9 @@ int mp2_sched_kthread_fn(void *unused)
 			mp2_current = tmp;
 			mp2_current->state = MP2_TASK_RUNNING;
 			printk(KERN_INFO "next task running:%d\n",tmp->pid);
-			mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
+			do {
+				mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
+			} while(mp2_current->next_period < jiffies);
 		} else {
 			printk(KERN_INFO "nothing on runqueue\n");
 		}
