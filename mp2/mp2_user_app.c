@@ -154,4 +154,5 @@ int main(int argc, char **argv)
 	/* Deregister process */
 	deregister_process(pid);
 	printf("Process deregistered\n");
+	return 0;
 }
