@@ -360,10 +360,6 @@ void mp2_yield_process(char *user_data)
 			mp2_current = NULL;
 			wake_up_interruptible(&mp2_waitqueue);
 		}
-		/* Lower the priority of the task */
-		mp2_set_sched_priority(tmp, SCHED_NORMAL, 0);
-
-		set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
 	} else {
 		/* Process needs to be on run queue
 		   If in sleeping state, move it to run queue
@@ -377,7 +373,13 @@ void mp2_yield_process(char *user_data)
 			local_irq_enable();
 		}
 		wake_up_interruptible(&mp2_waitqueue);
+		mp2_current = NULL;
 	}
+
+	/* Lower the priority of the task */
+	mp2_set_sched_priority(tmp, SCHED_NORMAL, 0);
+
+	set_task_state(tmp->task, TASK_UNINTERRUPTIBLE);
 
 	schedule();
 	printk(KERN_INFO "mp2: Yield for %u\n",pid);
@@ -481,9 +483,9 @@ int mp2_sched_kthread_fn(void *unused)
 			mp2_current = tmp;
 			mp2_current->state = MP2_TASK_RUNNING;
 			printk(KERN_INFO "next task running:%d\n",tmp->pid);
-			do {
+			/* do { */
 				mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
-			} while(mp2_current->next_period < jiffies);
+			/* } while(mp2_current->next_period < jiffies); */
 		} else {
 			printk(KERN_INFO "nothing on runqueue\n");
 		}
