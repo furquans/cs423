@@ -209,6 +209,8 @@ void mp2_register_process(char *user_data)
 
 	/* Advance to Computation time in the string */
 	user_data = tmp + 2;
+	tmp = strchr(user_data, '.');
+	*tmp = '\0';
 	sscanf(user_data, "%u", &new_task->C);
 
 	if (mp2_admission_control(new_task->C, new_task->P)==false) {

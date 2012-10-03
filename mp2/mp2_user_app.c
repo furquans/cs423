@@ -23,7 +23,7 @@ void register_process(unsigned int pid,
 {
 	char command[100];
 
-	sprintf(command, "R, %d, %d, %d", pid,P,C);
+	sprintf(command, "R, %d, %d, %d.", pid,P,C);
 	write(fd,command,strlen(command));
 }
 
