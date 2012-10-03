@@ -11,15 +11,18 @@
 #include <fcntl.h>
 #include <time.h>
 
+/* Command structure for giving different params */
 struct command {
 	unsigned int P;
 	unsigned int C;
 	unsigned int n;
 };
 
+/* Different P, C and n values */
 struct command cmd[] = {
 	{240, 170, 10},
 	{500, 170, 10},
+	{1000, 170, 10},
 	{280, 170, 10},
 	{900, 400, 10},
 	{5, 1, 3},
@@ -28,6 +31,11 @@ struct command cmd[] = {
 
 int fd = -1;
 
+/*
+ * Func: get_random_number
+ * Desc: Gives a random number
+ *
+ */
 int get_random_number()
 {
 	int n = sizeof(cmd)/sizeof(struct command);
@@ -35,7 +43,6 @@ int get_random_number()
 
 	srand(iseed);
 
-	printf("n=%d\n",n);
 	return(rand() % n);
 }
 
@@ -54,6 +61,11 @@ void register_process(unsigned int pid,
 	write(fd,command,strlen(command));
 }
 
+/*
+ * Func: deregister_process
+ * Desc: Deregistering the process with kernel module
+ *
+ */
 void deregister_process(unsigned int pid)
 {
 	char command[100];
@@ -61,6 +73,11 @@ void deregister_process(unsigned int pid)
 	write(fd,command,strlen(command));
 }
 
+/*
+ * Func: yield_process
+ * Desc: Yield the process after current execution is over
+ *
+ */
 void yield_process(unsigned int pid)
 {
 	char command[100];
@@ -83,9 +100,6 @@ int read_proc(unsigned int pid)
 
 	len = read(fd,command,4096);
 	command[len] = '\0';
-
-        /* printf("Printing return value of read from /proc/mp2/status\n"); */
-	/* printf("%s",command); */
 
 	sprintf(pid_str, "%u", pid);
 
@@ -111,6 +125,11 @@ int read_proc(unsigned int pid)
 	return ret;
 }
 
+/*
+ * Func: time_diff
+ * Desc: Calculate difference in time
+ *
+ */
 double time_diff(struct timeval *prev,
 		 struct timeval *curr)
 {
@@ -122,6 +141,11 @@ double time_diff(struct timeval *prev,
         return diff;
 }
 
+/*
+ * Func: fact
+ * Desc: Returns factorial of a number
+ *
+ */
 unsigned long long fact(unsigned long long n)
 {
         if((n==1) || (n==0))
@@ -129,7 +153,12 @@ unsigned long long fact(unsigned long long n)
         return(n*fact(n-1));
 }
 
-void calc_fact(int n)
+/*
+ * Func: do_job
+ * Desc: Function to be executed in loop
+ *
+ */
+void do_job(int n)
 {
 	unsigned long long i,p = fact(n);
 
@@ -150,7 +179,6 @@ int main(int argc, char **argv)
 	if (argc != 4) {
 		int id;
 		id = get_random_number();
-		printf("id=%d\n",id);
 		P = cmd[id].P;
 		C = cmd[id].C;
 		n = cmd[id].n;
@@ -169,20 +197,24 @@ int main(int argc, char **argv)
 	/* Register process with kernel module */
 	register_process(pid, P, C);
 
-
 	/* Read proc entry and check if we are registered */
 	if (read_proc(pid) == 0) {
 		exit(1);
 	}
 
+	/* get current time */
 	gettimeofday(&t0,NULL);
 
+	/* real time loop */
 	while(i<10) {
 		printf("Process doing a yield\n");
+		/* yield control */
 		yield_process(pid);
+		/* Get current time and calculate difference in time */
 		gettimeofday(&curr,NULL);
 		printf("time=  %lf msecs since start\n",time_diff(&t0,&curr));
-		calc_fact(n);
+		/* do job */
+		do_job(n);
 		i++;
 	}
 
