@@ -153,8 +153,6 @@ void wakeup_timer_handler(unsigned long pid)
 
 	mp2_add_task_to_rq(tmp);
 
-	printk(KERN_INFO "mp2: Task added to rq:%d\n",tmp->pid);
-
 	/* Wake up kernel scheduler thread */
 	wake_up_interruptible(&mp2_waitqueue);
 }
