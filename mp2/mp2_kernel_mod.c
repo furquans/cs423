@@ -354,7 +354,6 @@ void mp2_yield_process(char *user_data)
 			local_irq_restore(flags);
 			local_irq_enable();
 
-			printk(KERN_INFO "removed from rq\n");
 			mp2_current = NULL;
 			wake_up_interruptible(&mp2_waitqueue);
 		}
@@ -435,7 +434,7 @@ int mp2_sched_kthread_fn(void *unused)
 	printk(KERN_INFO "mp2: Schedule Thread created\n");
 
 	while (1) {
-		printk(KERN_INFO "mp2: Schedule thread sleeping\n");
+		/* printk(KERN_INFO "mp2: Schedule thread sleeping\n"); */
 		/* Set current state to interruptible */
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -448,7 +447,7 @@ int mp2_sched_kthread_fn(void *unused)
                         break;
                 }
 
-		printk(KERN_INFO "mp2: Schedule function running\n");
+		/* printk(KERN_INFO "mp2: Schedule function running\n"); */
 
 		/* Check if we have anything on the runqueue */
 		if (!list_empty(&mp2_rq)) {
@@ -484,8 +483,6 @@ int mp2_sched_kthread_fn(void *unused)
 			/* do { */
 				mp2_current->next_period += msecs_to_jiffies(mp2_current->P);
 			/* } while(mp2_current->next_period < jiffies); */
-		} else {
-			printk(KERN_INFO "nothing on runqueue\n");
 		}
 	}
 
