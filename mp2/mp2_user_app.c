@@ -9,8 +9,35 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <time.h>
+
+struct command {
+	unsigned int P;
+	unsigned int C;
+	unsigned int n;
+};
+
+struct command cmd[] = {
+	{240, 170, 10},
+	{500, 170, 10},
+	{280, 170, 10},
+	{900, 400, 10},
+	{5, 1, 3},
+	{1500, 800, 10},
+};
 
 int fd = -1;
+
+int get_random_number()
+{
+	int n = sizeof(cmd)/sizeof(struct command);
+	unsigned int iseed = (unsigned int)time(NULL);
+
+	srand(iseed);
+
+	printf("n=%d\n",n);
+	return(rand() % n);
+}
 
 /*
  * Func: register_process
@@ -118,22 +145,30 @@ int main(int argc, char **argv)
 	unsigned int pid;
 	struct timeval curr,t0;
 	int i = 0,n;
+	unsigned int P,C;
 
 	if (argc != 4) {
-		printf("Usage:%s <P> <C> <n>\n",argv[0]);
-		exit(1);
+		int id;
+		id = get_random_number();
+		printf("id=%d\n",id);
+		P = cmd[id].P;
+		C = cmd[id].C;
+		n = cmd[id].n;
+	} else {
+		P = atoi(argv[1]);
+		C = atoi(argv[2]);
+		n = atoi(argv[3]);
 	}
 
 	/* Get PID of the process */
 	pid = getpid();
-	printf("PID of process is %u\n",pid);
+	printf("PID of process is %u,P=%u,C=%u,n=%d\n",pid,P,C,n);
 
 	fd = open("/proc/mp2/status", O_RDWR);
 
 	/* Register process with kernel module */
-	register_process(pid, atoi(argv[1]), atoi(argv[2]));
+	register_process(pid, P, C);
 
-	n = atoi(argv[3]);
 
 	/* Read proc entry and check if we are registered */
 	if (read_proc(pid) == 0) {
