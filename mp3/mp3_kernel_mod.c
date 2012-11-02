@@ -15,7 +15,9 @@
 
 #include "mp3_given.h"
 
-#define NPAGES 130
+#define NPAGES 128
+
+#define MAX_VALUES (NPAGES*PAGE_SIZE/sizeof(unsigned long))
 
 struct mp3_task_struct {
 	/* PID of the registered process */
@@ -170,6 +172,11 @@ static void mp3_timer_handler(struct work_struct *dummy)
 	vmalloc_buffer[buff_ptr++] = total_min;
 	vmalloc_buffer[buff_ptr++] = total_maj;
 	vmalloc_buffer[buff_ptr++] = total_cpu;
+
+	if (buff_ptr > MAX_VALUES) {
+		buff_ptr = 0;
+		printk(KERN_INFO "mp3:wrapping around buffer");
+	}
 
 	printk(KERN_INFO "\n\nmp3:Jiffies:%lu",jiffies);
 	printk(KERN_INFO "Min:%lu",total_min);

@@ -26,7 +26,9 @@ void *buf_init(char *fname)
         printf("file open error. %s\n", fname);
         return NULL;
     }
+    printf("file open successful%s\n",fname);
   }
+  printf("buf_len:%d",buf_len);
   kadr = mmap(0, buf_len, PROT_READ|PROT_WRITE, MAP_SHARED, buf_fd, 0);
   if (kadr == MAP_FAILED){
       printf("buf file open error.\n");
@@ -47,9 +49,10 @@ void buf_exit()
 
 int main(int argc, char* argv[])
 {
-  long *buf;
-  int index = 0;
+  unsigned long *buf;
+  unsigned int index = 0;
   int i;
+  char tmp[10];
 
   // Open the char device and mmap()
   buf = buf_init("node");
@@ -58,31 +61,31 @@ int main(int argc, char* argv[])
   
   // Read and print profiled data
   for(index=0; index<BUFD_MAX; index++)
-    if(buf[index] != -1) break;
+    if(buf[index] != 0) break;
 
   i = 0;
-  while(buf[index] != -1){
-    printf("%d ", buf[index]);
-    buf[index++] = -1;
+  while(buf[index] != 0){
+    printf("%lu ", buf[index]);
+    buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
 
-    printf("%d ", buf[index]);
-    buf[index++] = -1;
+    printf("%lu ", buf[index]);
+    buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
 
-    printf("%d ", buf[index]);
-    buf[index++] = -1;
+    printf("%lu ", buf[index]);
+    buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
 
-    printf("%d\n", buf[index]);
-    buf[index++] = -1;
+    printf("%lu\n", buf[index]);
+    buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
     i++;
-  }
+    }
   printf("read %d profiled data\n", i);
 
   // Close the char device
