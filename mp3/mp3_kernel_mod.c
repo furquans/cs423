@@ -15,6 +15,8 @@
 
 #include "mp3_given.h"
 
+#define NPAGES 130
+
 struct mp3_task_struct {
 	/* PID of the registered process */
 	unsigned int pid;
@@ -50,7 +52,7 @@ static struct workqueue_struct *mp3_wq = 0;
 static DECLARE_DELAYED_WORK(mp3_work, &mp3_timer_handler);
 
 /* Buffer to be shared with user space process */
-static char *vmalloc_buffer;
+static unsigned long *vmalloc_buffer;
 static int buff_ptr = 0;
 
 static int mp3_dev_major, mp3_dev_minor = 0;
@@ -58,12 +60,39 @@ static int mp3_nr_devs = 1;
 static dev_t mp3_dev;
 static struct cdev *mp3_cdev;
 
-static ssize_t mp3_dev_read(struct file*,char __user*,size_t,loff_t*);
+int mp3_dev_mmap(struct file *, struct vm_area_struct *);
 
 static struct file_operations mp3_dev_fops = {
 	.owner = THIS_MODULE,
-	.read = mp3_dev_read,
+	.open = NULL,
+	.release = NULL,
+	.mmap = mp3_dev_mmap,
 };
+
+int mp3_dev_mmap(struct file *fp, struct vm_area_struct *vma)
+{
+	int ret,i;
+	unsigned long length = vma->vm_end - vma->vm_start;
+
+	if (length > NPAGES * PAGE_SIZE) {
+		return -EIO;
+	}
+
+	for (i=0; i < length; i+=PAGE_SIZE) {
+
+		if ((ret = remap_pfn_range(vma,
+					   vma->vm_start + i,
+					   vmalloc_to_pfn((void*)(((unsigned long)vmalloc_buffer)
+								  + i)),
+					   PAGE_SIZE,
+					   vma->vm_page_prot)) < 0) {
+		printk(KERN_INFO "mp3:mmap failed");
+		return ret;
+		}
+	}
+	printk(KERN_INFO "mp3:mmap successful");
+	return 0;
+}
 
 /* Func: find_mp3_task_by_pid
  * Desc: Find the mp3 task struct of given pid
@@ -178,6 +207,7 @@ void mp3_destroy_wq(void)
 		flush_workqueue(mp3_wq);
 		destroy_workqueue(mp3_wq);
 		printk(KERN_INFO "mp3:Deleted work queue");
+		printk(KERN_INFO "bufctr: %d",buff_ptr);
 	}
 	mp3_wq = NULL;
 }
@@ -336,10 +366,9 @@ int mp3_write_proc(struct file *filp, const char __user *buff,
  */
 static int allocate_buffer(void)
 {
-#define NPAGES 130
 	int i;
 
-	if ((vmalloc_buffer = vmalloc(NPAGES * PAGE_SIZE)) == NULL) {
+	if ((vmalloc_buffer = vzalloc(NPAGES * PAGE_SIZE)) == NULL) {
 		return -ENOMEM;
 	}
 
@@ -352,14 +381,6 @@ static int allocate_buffer(void)
 	return 0;
 }
 
-static ssize_t mp3_dev_read(struct file* fp,
-			    char __user* buf,
-			    size_t size,
-			    loff_t* off)
-{
-	return 0;
-}
-
 static int mp3_create_char_dev(void)
 {
 	int result = 0;
@@ -367,7 +388,7 @@ static int mp3_create_char_dev(void)
 	result = alloc_chrdev_region(&mp3_dev,
 				     mp3_dev_minor,
 				     mp3_nr_devs,
-				     "node");
+				     "mp3_char_dev");
 	mp3_dev_major = result;
 	if (result < 0) {
 		printk(KERN_INFO "mp3: Char dev cannot get major\n");
