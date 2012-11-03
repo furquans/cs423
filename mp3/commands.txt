@@ -1,0 +1,7 @@
+Case 1:
+nice ./work 512 R 50000 & nice ./work 512 R 10000 &
+
+nice ./work 512 R 50000 & nice ./work 512 L 10000 &
+
+Case 2:
+nice ./work 100 R 10000
