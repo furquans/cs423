@@ -26,9 +26,7 @@ void *buf_init(char *fname)
         printf("file open error. %s\n", fname);
         return NULL;
     }
-    printf("file open successful%s\n",fname);
   }
-  printf("buf_len:%d",buf_len);
   kadr = mmap(0, buf_len, PROT_READ|PROT_WRITE, MAP_SHARED, buf_fd, 0);
   if (kadr == MAP_FAILED){
       printf("buf file open error.\n");
@@ -52,7 +50,6 @@ int main(int argc, char* argv[])
   unsigned long *buf;
   unsigned int index = 0;
   int i;
-  char tmp[10];
 
   // Open the char device and mmap()
   buf = buf_init("node");
@@ -65,17 +62,17 @@ int main(int argc, char* argv[])
 
   i = 0;
   while(buf[index] != 0){
-    printf("%lu ", buf[index]);
+    printf("%lu,", buf[index]);
     buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
 
-    printf("%lu ", buf[index]);
+    printf("%lu,", buf[index]);
     buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
 
-    printf("%lu ", buf[index]);
+    printf("%lu,", buf[index]);
     buf[index++] = 0;
     if(index >= BUFD_MAX)
       index = 0;
@@ -90,5 +87,7 @@ int main(int argc, char* argv[])
 
   // Close the char device
   buf_exit();
+
+  return 0;
 }
 
