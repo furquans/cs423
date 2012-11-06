@@ -71,6 +71,10 @@ static struct file_operations mp3_dev_fops = {
 	.mmap = mp3_dev_mmap,
 };
 
+/* Func: mp3_dev_mmap
+ * Desc: MMAP the memory buffer in user address space
+ *
+ */
 int mp3_dev_mmap(struct file *fp, struct vm_area_struct *vma)
 {
 	int ret,i;
@@ -80,10 +84,14 @@ int mp3_dev_mmap(struct file *fp, struct vm_area_struct *vma)
 		return -EIO;
 	}
 
+	/* Done for every page */
 	for (i=0; i < length; i+=PAGE_SIZE) {
-
+		/* Remap every page in the virtual address space of the user process.
+		   This is required so that the process can access with correct privilege
+		   Else MMU will report violation */
 		if ((ret = remap_pfn_range(vma,
 					   vma->vm_start + i,
+					   /* Convert virtual address to page frame number */
 					   vmalloc_to_pfn((void*)(((unsigned long)vmalloc_buffer)
 								  + i)),
 					   PAGE_SIZE,
@@ -140,8 +148,6 @@ static void mp3_timer_handler(struct work_struct *dummy)
 	unsigned long maj, min, cpu;
 	unsigned long total_maj = 0, total_min = 0, total_cpu = 0;
 
-	printk(KERN_INFO "mp3:timer handler for work queue");
-
         if (down_interruptible(&mp3_sem)) {
 		printk(KERN_INFO "mp3:Unable to enter critical region\n");
                 return;
@@ -149,7 +155,7 @@ static void mp3_timer_handler(struct work_struct *dummy)
 
 	/* Scan through the list to update params for all processes */
 	list_for_each_entry(tmp, &mp3_task_struct_list, task_list) {
-		if (get_cpu_use(tmp->pid,
+		if (get_cpu_use(tmp->task,
 				&min,
 				&maj,
 				&cpu) == -1) {
@@ -160,10 +166,6 @@ static void mp3_timer_handler(struct work_struct *dummy)
 		total_min += min;
 		total_maj += maj;
 		total_cpu += cpu;
-
-		tmp->minor_fault = min;
-		tmp->major_fault = maj;
-		tmp->proc_util = cpu;
         }
 
 	up(&mp3_sem);
@@ -177,11 +179,6 @@ static void mp3_timer_handler(struct work_struct *dummy)
 		buff_ptr = 0;
 		printk(KERN_INFO "mp3:wrapping around buffer");
 	}
-
-	printk(KERN_INFO "\n\nmp3:Jiffies:%lu",jiffies);
-	printk(KERN_INFO "Min:%lu",total_min);
-	printk(KERN_INFO "Maj:%lu",total_maj);
-	printk(KERN_INFO "Cpu:%lu",total_cpu);
 
 	if (mp3_wq) {
 		queue_delayed_work(mp3_wq, &mp3_work, delay);
@@ -214,7 +211,6 @@ void mp3_destroy_wq(void)
 		flush_workqueue(mp3_wq);
 		destroy_workqueue(mp3_wq);
 		printk(KERN_INFO "mp3:Deleted work queue");
-		printk(KERN_INFO "bufctr: %d",buff_ptr);
 	}
 	mp3_wq = NULL;
 }
@@ -381,6 +377,8 @@ static int allocate_buffer(void)
 
 	buff_ptr = 0;
 
+	/* Set PG_RESERVED bit of pages to avoid MMU from swapping out the pages */
+	/* Done for every page */
 	for (i = 0;i < NPAGES*PAGE_SIZE;i += PAGE_SIZE) {
 		SetPageReserved(vmalloc_to_page((void*)(((unsigned long)vmalloc_buffer)
 							+ i)));
@@ -388,10 +386,15 @@ static int allocate_buffer(void)
 	return 0;
 }
 
+/* Func: mp3_create_char_dev
+ * Desc: Create a character device
+ *
+ */
 static int mp3_create_char_dev(void)
 {
 	int result = 0;
 
+	/* Dynamically allocate a major number for the device */
 	result = alloc_chrdev_region(&mp3_dev,
 				     mp3_dev_minor,
 				     mp3_nr_devs,
@@ -402,10 +405,13 @@ static int mp3_create_char_dev(void)
 		return result;
 	}
 
+	/* Allocate a character device structure */
 	mp3_cdev = cdev_alloc();
+	/* Assign the function pointers */
 	mp3_cdev->ops = &mp3_dev_fops;
 	mp3_cdev->owner = THIS_MODULE;
 
+	/* Add this character device */
 	result = cdev_add(mp3_cdev, mp3_dev, 1);
 	if (result) {
 		printk(KERN_INFO "mp3: Error adding device\n");
@@ -414,9 +420,15 @@ static int mp3_create_char_dev(void)
 	return result;
 }
 
+/* Func: mp3_delete_char_dev
+ * Desc: Delete character device
+ *
+ */
 static void mp3_delete_char_dev(void)
 {
+	/* Delete the character device */
 	cdev_del(mp3_cdev);
+	/* Unregister the character device */
 	unregister_chrdev_region(mp3_dev, mp3_nr_devs);
 }
 
@@ -466,6 +478,7 @@ static int __init mp3_init_module(void)
 		goto clear_alloc;
 	}
 
+	/* Create a character device */
 	if ((ret = mp3_create_char_dev()) != 0) {
 		goto clear_alloc;
 	}
@@ -517,6 +530,7 @@ static void __exit mp3_exit_module(void)
 	mp3_destroy_wq();
 	mp3_delete_char_dev();
 
+	/* Clear the PG_RESERVED bits of the pages */
 	for (i = 0;i < NPAGES*PAGE_SIZE;i += PAGE_SIZE) {
 		ClearPageReserved(vmalloc_to_page((void*)(((unsigned long)vmalloc_buffer)
 							  + i)));
